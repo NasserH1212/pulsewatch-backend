@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  VIEWER
+}
+
+enum MonitorType {
+  HTTP
+  PING
+  PORT
+}
+
+enum CheckStatus {
+  UP
+  DOWN
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  role          Role           @default(VIEWER)
+  createdAt     DateTime       @default(now())
+  monitors      Monitor[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Monitor {
+  id              String     @id @default(uuid())
+  name            String
+  type            MonitorType
+  target          String     // full URL for HTTP, hostname/IP for PING, "host:port" for PORT
+  intervalSeconds Int        @default(60)
+  createdById     String
+  createdBy       User       @relation(fields: [createdById], references: [id])
+  createdAt       DateTime   @default(now())
+  checks          Check[]
+  incidents       Incident[]
+  agentKeys       AgentKey[]
+}
+
+model Check {
+  id             String      @id @default(uuid())
+  monitorId      String
+  monitor        Monitor     @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  status         CheckStatus
+  responseTimeMs Int?
+  checkedAt      DateTime    @default(now())
+
+  @@index([monitorId, checkedAt])
+}
+
+model Incident {
+  id         String    @id @default(uuid())
+  monitorId  String
+  monitor    Monitor   @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  startedAt  DateTime  @default(now())
+  resolvedAt DateTime?
+  cause      String?
+
+  @@index([monitorId, resolvedAt])
+}
+
+// Reserved for a future "push" mode where external agents report checks themselves
+// instead of the server polling them (see agentAuth.middleware.ts).
+model AgentKey {
+  id        String   @id @default(uuid())
+  monitorId String
+  monitor   Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  keyHash   String
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
