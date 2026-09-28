@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { AuthedRequest } from '../../middlewares/auth.middleware';
-import { CreateMonitorInput } from './monitor.schemas';
+import { CreateMonitorInput, StatsQuery, UpdateMonitorInput } from './monitor.schemas';
 import * as monitorService from './monitor.service';
 
 // The body was validated by createMonitorSchema (see monitor.routes.ts).
@@ -22,4 +22,15 @@ export const getOne = async (req: AuthedRequest, res: Response) => {
 export const remove = async (req: AuthedRequest, res: Response) => {
   await monitorService.deleteMonitor(req.params.id);
   res.status(204).send();
+};
+
+// The query was validated and defaulted by statsQuerySchema (see monitor.routes.ts).
+export const getStats = async (req: AuthedRequest, res: Response) => {
+  const { period } = req.query as unknown as StatsQuery;
+  res.json(await monitorService.getMonitorStats(req.params.id, period));
+};
+
+export const update = async (req: AuthedRequest, res: Response) => {
+  const monitor = await monitorService.updateMonitor(req.params.id, req.body as UpdateMonitorInput);
+  res.json(monitor);
 };

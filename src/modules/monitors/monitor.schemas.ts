@@ -1,6 +1,6 @@
 import net from 'net';
 import { z } from 'zod';
-import { MAX_FAILURE_THRESHOLD, MIN_INTERVAL_SECONDS } from '../checks/monitorState';
+import { MAX_FAILURE_THRESHOLD, MIN_INTERVAL_SECONDS, STATS_PERIODS } from '../checks/monitorState';
 
 const MAX_INTERVAL_SECONDS = 24 * 60 * 60;
 
@@ -34,6 +34,14 @@ export const isHostPort = (value: string) => {
 const target = (isValid: (value: string) => boolean, message: string) =>
   z.string('Target is required').trim().max(2048, 'Target is too long').refine(isValid, { error: message });
 
+// One place for the type -> target-format rule, so create and update both
+// check the same thing the same way.
+export const targetRules = {
+  HTTP: { isValid: isHttpUrl, message: 'HTTP target must be a full URL, e.g. https://example.com/health' },
+  PORT: { isValid: isHostPort, message: 'PORT target must be host:port, e.g. db.example.com:5432' },
+  PING: { isValid: isHost, message: 'PING target must be a hostname or IPv4 address' },
+} as const;
+
 const commonFields = {
   name: z.string('Name is required').trim().min(1, 'Name is required').max(100, 'Name is too long'),
   intervalSeconds: z
@@ -52,19 +60,43 @@ const commonFields = {
 export const createMonitorSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('HTTP'),
-    target: target(isHttpUrl, 'HTTP target must be a full URL, e.g. https://example.com/health'),
+    target: target(targetRules.HTTP.isValid, targetRules.HTTP.message),
     ...commonFields,
   }),
   z.object({
     type: z.literal('PORT'),
-    target: target(isHostPort, 'PORT target must be host:port, e.g. db.example.com:5432'),
+    target: target(targetRules.PORT.isValid, targetRules.PORT.message),
     ...commonFields,
   }),
   z.object({
     type: z.literal('PING'),
-    target: target(isHost, 'PING target must be a hostname or IPv4 address'),
+    target: target(targetRules.PING.isValid, targetRules.PING.message),
     ...commonFields,
   }),
 ]);
 
 export type CreateMonitorInput = z.infer<typeof createMonitorSchema>;
+
+export const statsQuerySchema = z.object({
+  period: z.enum(STATS_PERIODS).default('24h'),
+});
+
+export type StatsQuery = z.infer<typeof statsQuerySchema>;
+
+// Partial update: every field optional, but at least one must be present.
+// The target's format still depends on the monitor's type, which isn't part
+// of this payload (the type itself can't change) — monitor.service.ts checks
+// it against targetRules once it has loaded the monitor.
+export const updateMonitorSchema = z
+  .object({
+    name: commonFields.name.optional(),
+    target: z.string('Target is required').trim().max(2048, 'Target is too long').optional(),
+    intervalSeconds: commonFields.intervalSeconds,
+    failureThreshold: commonFields.failureThreshold,
+    paused: z.boolean('paused must be a boolean').optional(),
+  })
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    error: 'At least one field must be provided',
+  });
+
+export type UpdateMonitorInput = z.infer<typeof updateMonitorSchema>;

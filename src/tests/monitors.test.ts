@@ -122,3 +122,161 @@ describe('/api/monitors access control', () => {
     expect(remove.status).toBe(403);
   });
 });
+
+describe('GET /api/monitors/:id/stats', () => {
+  let monitorId: string;
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000);
+
+  beforeAll(async () => {
+    const create = await request(app)
+      .post('/api/monitors')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(newMonitor);
+    monitorId = create.body.id;
+
+    // Inside the 24h window: 3 UP (100/200/300ms) + 1 DOWN. One more UP sits
+    // outside it (40h ago), only picked up by the wider 7d period.
+    await prisma.check.createMany({
+      data: [
+        { monitorId, status: 'UP', responseTimeMs: 100, checkedAt: hoursAgo(20) },
+        { monitorId, status: 'UP', responseTimeMs: 200, checkedAt: hoursAgo(10) },
+        { monitorId, status: 'UP', responseTimeMs: 300, checkedAt: hoursAgo(5) },
+        { monitorId, status: 'DOWN', checkedAt: hoursAgo(4) },
+        { monitorId, status: 'UP', responseTimeMs: 999, checkedAt: hoursAgo(40) },
+      ],
+    });
+    // Overlaps the 24h period: 3 hours of downtime.
+    await prisma.incident.create({ data: { monitorId, startedAt: hoursAgo(6), resolvedAt: hoursAgo(3) } });
+    // Resolved well before the 24h period, but still inside the 7d one.
+    await prisma.incident.create({ data: { monitorId, startedAt: hoursAgo(50), resolvedAt: hoursAgo(45) } });
+  });
+
+  it('defaults to a 24h period and aggregates counts, uptime and downtime', async () => {
+    const res = await request(app)
+      .get(`/api/monitors/${monitorId}/stats`)
+      .set('Authorization', `Bearer ${viewerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      period: '24h',
+      totalChecks: 4,
+      uptimePercent: 75,
+      avgResponseTimeMs: 200, // average of the 3 UP checks only
+      incidentCount: 1,
+      downtimeSeconds: 3 * 60 * 60,
+    });
+  });
+
+  it('picks up more checks and incidents with a wider period', async () => {
+    const res = await request(app)
+      .get(`/api/monitors/${monitorId}/stats?period=7d`)
+      .set('Authorization', `Bearer ${viewerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalChecks).toBe(5);
+    expect(res.body.incidentCount).toBe(2);
+  });
+
+  it('rejects an unsupported period', async () => {
+    const res = await request(app)
+      .get(`/api/monitors/${monitorId}/stats?period=1h`)
+      .set('Authorization', `Bearer ${viewerToken}`);
+    expect(res.status).toBe(400);
+  });
+
+  it('answers 404 for a monitor that does not exist', async () => {
+    const res = await request(app)
+      .get('/api/monitors/00000000-0000-0000-0000-000000000000/stats')
+      .set('Authorization', `Bearer ${viewerToken}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('PATCH /api/monitors/:id', () => {
+  let monitorId: string;
+
+  beforeEach(async () => {
+    const create = await request(app)
+      .post('/api/monitors')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(newMonitor);
+    monitorId = create.body.id;
+  });
+
+  it('lets an ADMIN update name, interval, threshold and paused', async () => {
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Renamed', intervalSeconds: 120, failureThreshold: 5, paused: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ name: 'Renamed', intervalSeconds: 120, failureThreshold: 5, paused: true });
+  });
+
+  it('resets consecutiveFailures when the target changes', async () => {
+    await prisma.monitor.update({ where: { id: monitorId }, data: { consecutiveFailures: 3 } });
+
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ target: 'https://example.org' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ target: 'https://example.org', consecutiveFailures: 0 });
+  });
+
+  it('keeps consecutiveFailures when the target is unchanged', async () => {
+    await prisma.monitor.update({ where: { id: monitorId }, data: { consecutiveFailures: 3 } });
+
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ target: newMonitor.target, name: 'Same target' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.consecutiveFailures).toBe(3);
+  });
+
+  it('rejects a target that no longer matches the monitor type', async () => {
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ target: 'not a url' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('ignores an attempt to change the type', async () => {
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ type: 'PING', name: 'Still HTTP' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe('HTTP');
+  });
+
+  it('rejects a body with no fields to update', async () => {
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('does not let a VIEWER update a monitor', async () => {
+    const res = await request(app)
+      .patch(`/api/monitors/${monitorId}`)
+      .set('Authorization', `Bearer ${viewerToken}`)
+      .send({ name: 'Nope' });
+    expect(res.status).toBe(403);
+  });
+
+  it('answers 404 for a monitor that does not exist', async () => {
+    const res = await request(app)
+      .patch('/api/monitors/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Nope' });
+    expect(res.status).toBe(404);
+  });
+});

@@ -10,6 +10,8 @@ Self-hosted infrastructure uptime & alerting API. PulseWatch periodically checks
 - ✅ Concurrent checks with a cap, so slow or timing-out targets never block the rest
 - ✅ Real-time status updates via Socket.io, authenticated with the same JWT as the API
 - ✅ Failure threshold per monitor (default 2 failed checks in a row), with a fast 20s re-check to confirm, so one network blip never pages anyone
+- ✅ Uptime / response-time / downtime stats per monitor over 24h, 7d or 30d, aggregated in the database
+- ✅ Edit or pause a monitor without recreating it; the scheduler skips paused monitors
 - ✅ Automatic incident tracking (opens on a confirmed outage, dated from the first failure; closes on recovery), race-safe via row locking
 - ✅ Telegram alerts on status change (once per transition, never repeated)
 - ✅ Automatic cleanup of check history older than 30 days (configurable)
@@ -87,7 +89,9 @@ Log in again afterwards; the role is carried inside the access token.
 | GET | `/api/auth/me` | Any authed user | Current user |
 | GET | `/api/monitors` | Any authed user | List all monitors with latest status |
 | GET | `/api/monitors/:id` | Any authed user | Monitor detail + check/incident history |
+| GET | `/api/monitors/:id/stats` | Any authed user | Uptime % and downtime over a period (see below) |
 | POST | `/api/monitors` | ADMIN | Create a monitor (see below) |
+| PATCH | `/api/monitors/:id` | ADMIN | Update a monitor (see below) |
 | DELETE | `/api/monitors/:id` | ADMIN | Remove a monitor |
 
 **Creating a monitor.** The target format depends on the type:
@@ -101,6 +105,24 @@ Log in again afterwards; the role is carried inside the access token.
 ```json
 { "name": "Main site", "type": "HTTP", "target": "https://example.com", "intervalSeconds": 60 }
 ```
+
+**Monitor stats.** `GET /api/monitors/:id/stats?period=24h|7d|30d` (default `24h`) aggregates in
+the database instead of loading every check row:
+
+```json
+{ "period": "24h", "totalChecks": 480, "uptimePercent": 99.79,
+  "avgResponseTimeMs": 142, "incidentCount": 1, "downtimeSeconds": 180 }
+```
+
+`uptimePercent` is the share of checks that were UP; `avgResponseTimeMs` averages UP checks only
+(a timed-out check has no response time). `downtimeSeconds` is incident time clipped to the
+period — an incident that started earlier or is still open only counts the part inside the window.
+
+**Updating a monitor.** `PATCH /api/monitors/:id` (ADMIN) accepts any of `name`, `target`,
+`intervalSeconds`, `failureThreshold` and `paused`; at least one is required. The monitor's `type`
+can't change, so `target` is checked against the same rules as on create for its existing type.
+Changing `target` resets `consecutiveFailures`. A `paused` monitor is skipped by the scheduler
+until it's unpaused.
 
 **Errors** always have the same shape. Invalid bodies also list each field:
 
@@ -164,8 +186,8 @@ DB tests clean up the users and monitors they create. CI runs everything against
 - [x] Input validation with zod
 - [x] Consecutive-failure threshold before alerting
 - [x] Check history retention
-- [ ] Uptime / response-time stats endpoint
-- [ ] Edit and pause monitors
+- [x] Uptime / response-time stats endpoint
+- [x] Edit and pause monitors
 
 ## License
 

@@ -117,6 +117,7 @@ export const startScheduler = (io: Server) => {
 
     try {
       const monitors = await prisma.monitor.findMany({
+        where: { paused: false },
         select: {
           id: true,
           name: true,

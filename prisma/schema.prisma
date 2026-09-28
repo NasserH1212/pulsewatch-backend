@@ -54,6 +54,7 @@ model Monitor {
   type                MonitorType
   target              String // full URL for HTTP, hostname/IP for PING, "host:port" for PORT
   intervalSeconds     Int          @default(60)
+  paused              Boolean      @default(false)
   // Failed checks in a row needed before the monitor counts as DOWN
   // (opens an incident, sends an alert). Filters out one-off network blips.
   failureThreshold    Int          @default(2)

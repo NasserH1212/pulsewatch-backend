@@ -56,6 +56,33 @@ export interface Evaluation {
 //   threshold. Below it, the confirmed state stays as it was.
 // A brand-new monitor (lastStatus null) that fails enough times still goes
 // DOWN, so a target that is dead from the start gets an alert too.
+export const STATS_PERIODS = ['24h', '7d', '30d'] as const;
+export type StatsPeriod = (typeof STATS_PERIODS)[number];
+
+export const STATS_PERIOD_MS: Record<StatsPeriod, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+};
+
+export interface IncidentSpan {
+  startedAt: Date;
+  resolvedAt: Date | null;
+}
+
+// Sums each incident's time that falls within [periodStart, now], in whole
+// seconds. An incident that started before the period, or that is still
+// open, is clipped to the period instead of counting its full duration.
+export const downtimeSecondsInPeriod = (incidents: IncidentSpan[], periodStart: Date, now: Date): number => {
+  let totalMs = 0;
+  for (const incident of incidents) {
+    const start = Math.max(incident.startedAt.getTime(), periodStart.getTime());
+    const end = Math.min((incident.resolvedAt ?? now).getTime(), now.getTime());
+    if (end > start) totalMs += end - start;
+  }
+  return Math.round(totalMs / 1000);
+};
+
 export const evaluateCheck = (previous: MonitorHealth, isUp: boolean): Evaluation => {
   if (isUp) {
     return {

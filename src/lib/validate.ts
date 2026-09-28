@@ -22,3 +22,21 @@ export const validateBody =
     req.body = result.data;
     next();
   };
+
+// Same idea as validateBody, but for req.query (e.g. ?period=7d).
+export const validateQuery =
+  (schema: z.ZodType) => (req: Request, res: Response, next: NextFunction) => {
+    const result = schema.safeParse(req.query);
+    if (!result.success) {
+      return res.status(400).json({
+        error: 'Invalid query parameters',
+        details: result.error.issues.map((issue) => ({
+          field: issue.path.join('.') || '(query)',
+          message: issue.message,
+        })),
+      });
+    }
+
+    req.query = result.data as typeof req.query;
+    next();
+  };

@@ -1,4 +1,5 @@
 import {
+  downtimeSecondsInPeriod,
   DUE_SLACK_MS,
   effectiveIntervalSeconds,
   evaluateCheck,
@@ -117,5 +118,42 @@ describe('evaluateCheck', () => {
       consecutiveFailures: 0,
       transition: 'RECOVERED',
     });
+  });
+});
+
+describe('downtimeSecondsInPeriod', () => {
+  const now = new Date('2026-09-28T12:00:00Z');
+  const periodStart = new Date('2026-09-27T12:00:00Z'); // 24h window
+
+  it('counts a resolved incident fully inside the period', () => {
+    const incidents = [{ startedAt: new Date('2026-09-28T00:00:00Z'), resolvedAt: new Date('2026-09-28T01:00:00Z') }];
+    expect(downtimeSecondsInPeriod(incidents, periodStart, now)).toBe(3600);
+  });
+
+  it('clips an incident that started before the period to periodStart', () => {
+    const incidents = [{ startedAt: new Date('2026-09-27T10:00:00Z'), resolvedAt: new Date('2026-09-27T13:00:00Z') }];
+    expect(downtimeSecondsInPeriod(incidents, periodStart, now)).toBe(3600); // only the hour after periodStart
+  });
+
+  it('clips an incident that is still open to now', () => {
+    const incidents = [{ startedAt: new Date('2026-09-28T11:00:00Z'), resolvedAt: null }];
+    expect(downtimeSecondsInPeriod(incidents, periodStart, now)).toBe(3600);
+  });
+
+  it('ignores an incident that resolved before the period started', () => {
+    const incidents = [{ startedAt: new Date('2026-09-26T00:00:00Z'), resolvedAt: new Date('2026-09-27T00:00:00Z') }];
+    expect(downtimeSecondsInPeriod(incidents, periodStart, now)).toBe(0);
+  });
+
+  it('sums several incidents', () => {
+    const incidents = [
+      { startedAt: new Date('2026-09-28T00:00:00Z'), resolvedAt: new Date('2026-09-28T00:30:00Z') },
+      { startedAt: new Date('2026-09-28T10:00:00Z'), resolvedAt: null },
+    ];
+    expect(downtimeSecondsInPeriod(incidents, periodStart, now)).toBe(30 * 60 + 2 * 60 * 60);
+  });
+
+  it('returns 0 with no incidents', () => {
+    expect(downtimeSecondsInPeriod([], periodStart, now)).toBe(0);
   });
 });
