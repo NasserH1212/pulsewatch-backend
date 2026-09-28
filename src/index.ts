@@ -2,6 +2,7 @@ import http from 'http';
 import { createApp } from './app';
 import { env } from './config/env';
 import { prisma } from './lib/prisma';
+import { startRetentionJob } from './modules/checks/retention';
 import { startScheduler } from './modules/checks/scheduler';
 import { createSocketServer } from './sockets';
 
@@ -10,6 +11,7 @@ const server = http.createServer(app);
 const io = createSocketServer(server);
 
 const stopScheduler = startScheduler(io);
+const stopRetention = startRetentionJob();
 
 server.listen(env.port, () => {
   console.log(`🚀 PulseWatch API running on http://localhost:${env.port}`);
@@ -20,6 +22,7 @@ server.listen(env.port, () => {
 const shutdown = (signal: string) => {
   console.log(`${signal} received, shutting down...`);
   stopScheduler();
+  stopRetention();
   // Closes every socket and then the HTTP server itself.
   io.close(async () => {
     await prisma.$disconnect();

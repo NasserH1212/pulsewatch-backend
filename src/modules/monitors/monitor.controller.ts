@@ -1,23 +1,11 @@
 import { Response } from 'express';
 import { AuthedRequest } from '../../middlewares/auth.middleware';
+import { CreateMonitorInput } from './monitor.schemas';
 import * as monitorService from './monitor.service';
 
+// The body was validated by createMonitorSchema (see monitor.routes.ts).
 export const create = async (req: AuthedRequest, res: Response) => {
-  const { name, type, target, intervalSeconds } = req.body;
-  if (!name || !type || !target) {
-    return res.status(400).json({ error: 'name, type and target are required' });
-  }
-  if (!['HTTP', 'PING', 'PORT'].includes(type)) {
-    return res.status(400).json({ error: 'type must be HTTP, PING or PORT' });
-  }
-
-  const monitor = await monitorService.createMonitor({
-    name,
-    type,
-    target,
-    intervalSeconds,
-    createdById: req.user!.userId,
-  });
+  const monitor = await monitorService.createMonitor(req.body as CreateMonitorInput, req.user!.userId);
   res.status(201).json(monitor);
 };
 

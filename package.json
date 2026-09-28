@@ -26,7 +26,8 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "ping": "^0.4.4",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

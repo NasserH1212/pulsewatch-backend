@@ -44,6 +44,17 @@ describe('session lifecycle', () => {
     expect(duplicate.status).toBe(409);
   });
 
+  it('treats the email as case-insensitive', async () => {
+    const duplicate = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Again', email: email.toUpperCase(), password });
+    expect(duplicate.status).toBe(409);
+
+    const login = await request(app).post('/api/auth/login').send({ email: `  ${email.toUpperCase()} `, password });
+    expect(login.status).toBe(200);
+    expect(login.body.user.email).toBe(email);
+  });
+
   it('logs in and sets an httpOnly refresh cookie scoped to /api/auth', async () => {
     const res = await request(app).post('/api/auth/login').send({ email, password });
     expect(res.status).toBe(200);

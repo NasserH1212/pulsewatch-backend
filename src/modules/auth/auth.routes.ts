@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { asyncHandler } from '../../lib/asyncHandler';
+import { validateBody } from '../../lib/validate';
 import { requireAuth } from '../../middlewares/auth.middleware';
 import { login, logout, me, refresh, register } from './auth.controller';
+import { loginSchema, registerSchema } from './auth.schemas';
 
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
 
@@ -30,8 +32,9 @@ const refreshLimiter = rateLimit({
 
 export const authRouter = Router();
 
-authRouter.post('/register', registerLimiter, asyncHandler(register));
-authRouter.post('/login', loginLimiter, asyncHandler(login));
+// Rate limiters run before validation, so malformed attempts still count.
+authRouter.post('/register', registerLimiter, validateBody(registerSchema), asyncHandler(register));
+authRouter.post('/login', loginLimiter, validateBody(loginSchema), asyncHandler(login));
 authRouter.post('/refresh', refreshLimiter, asyncHandler(refresh));
 authRouter.post('/logout', asyncHandler(logout));
 authRouter.get('/me', requireAuth, asyncHandler(me));

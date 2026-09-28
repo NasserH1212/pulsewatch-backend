@@ -1,20 +1,13 @@
-import { MonitorType } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
+import { CreateMonitorInput } from './monitor.schemas';
 
-interface CreateMonitorInput {
-  name: string;
-  type: MonitorType;
-  target: string;
-  intervalSeconds?: number;
-  createdById: string;
-}
-
-export const createMonitor = (data: CreateMonitorInput) => prisma.monitor.create({ data });
+export const createMonitor = (input: CreateMonitorInput, createdById: string) =>
+  prisma.monitor.create({ data: { ...input, createdById } });
 
 export const listMonitors = () =>
   prisma.monitor.findMany({
     orderBy: { createdAt: 'desc' },
-    include: { checks: { orderBy: { checkedAt: 'desc' }, take: 1 } }, // latest status per monitor
+    include: { checks: { orderBy: { checkedAt: 'desc' }, take: 1 } }, // latest raw check per monitor
   });
 
 export const getMonitorWithHistory = (id: string) =>
@@ -26,4 +19,9 @@ export const getMonitorWithHistory = (id: string) =>
     },
   });
 
-export const deleteMonitor = (id: string) => prisma.monitor.delete({ where: { id } });
+// deleteMany instead of delete: a missing id gives count 0 rather than an
+// exception, so it can be answered with a clean 404.
+export const deleteMonitor = async (id: string) => {
+  const { count } = await prisma.monitor.deleteMany({ where: { id } });
+  if (count === 0) throw { status: 404, message: 'Monitor not found' };
+};

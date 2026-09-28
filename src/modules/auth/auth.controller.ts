@@ -2,6 +2,7 @@ import { CookieOptions, Request, Response } from 'express';
 import { env } from '../../config/env';
 import { REFRESH_TOKEN_TTL_MS } from '../../lib/jwt';
 import { AuthedRequest } from '../../middlewares/auth.middleware';
+import { LoginInput, RegisterInput } from './auth.schemas';
 import {
   getCurrentUser,
   loginUser,
@@ -26,22 +27,16 @@ const setRefreshCookie = (res: Response, token: string) =>
 
 const clearRefreshCookie = (res: Response) => res.clearCookie(REFRESH_COOKIE, refreshCookieOptions);
 
+// Bodies reaching register and login were already checked and normalized by
+// validateBody (see auth.routes.ts), so no field checks are repeated here.
 export const register = async (req: Request, res: Response) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ error: 'name, email and password are required' });
-  }
-
+  const { name, email, password } = req.body as RegisterInput;
   const user = await registerUser(name, email, password);
   res.status(201).json({ id: user.id, name: user.name, email: user.email });
 };
 
 export const login = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'email and password are required' });
-  }
-
+  const { email, password } = req.body as LoginInput;
   const { accessToken, refreshToken, user } = await loginUser(email, password);
   setRefreshCookie(res, refreshToken);
   res.json({ accessToken, user });

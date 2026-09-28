@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { User } from '@prisma/client';
-import { prisma } from '../../lib/prisma';
+import { isPrismaError, prisma } from '../../lib/prisma';
 import {
   hashToken,
   REFRESH_TOKEN_TTL_MS,
@@ -19,18 +19,23 @@ const toPublicUser = (user: User) => ({
 
 const invalidSession = () => ({ status: 401, message: 'Invalid or expired session' });
 
+// Expects input already validated by registerSchema (email lowercased,
+// password length checked).
 export const registerUser = async (name: string, email: string, password: string) => {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw { status: 409, message: 'Email already registered' };
 
-  if (password.length < 8) {
-    throw { status: 400, message: 'Password must be at least 8 characters' };
-  }
-
   const passwordHash = await bcrypt.hash(password, 10);
-  return prisma.user.create({
-    data: { name, email, passwordHash, role: 'VIEWER' },
-  });
+  try {
+    return await prisma.user.create({
+      data: { name, email, passwordHash, role: 'VIEWER' },
+    });
+  } catch (err) {
+    // Two sign-ups with the same email at the same moment can both pass the
+    // check above; the unique index stops the second one here.
+    if (isPrismaError(err, 'P2002')) throw { status: 409, message: 'Email already registered' };
+    throw err;
+  }
 };
 
 // Every login (and every refresh) opens a new session row. The row id goes

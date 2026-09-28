@@ -49,21 +49,27 @@ model RefreshToken {
 }
 
 model Monitor {
-  id              String       @id @default(uuid())
-  name            String
-  type            MonitorType
-  target          String // full URL for HTTP, hostname/IP for PING, "host:port" for PORT
-  intervalSeconds Int          @default(60)
-  // Cached result of the latest check. The scheduler reads these instead of
-  // querying the Check table for every monitor on every tick.
-  lastCheckedAt   DateTime?
-  lastStatus      CheckStatus?
-  createdById     String
-  createdBy       User         @relation(fields: [createdById], references: [id])
-  createdAt       DateTime     @default(now())
-  checks          Check[]
-  incidents       Incident[]
-  agentKeys       AgentKey[]
+  id                  String       @id @default(uuid())
+  name                String
+  type                MonitorType
+  target              String // full URL for HTTP, hostname/IP for PING, "host:port" for PORT
+  intervalSeconds     Int          @default(60)
+  // Failed checks in a row needed before the monitor counts as DOWN
+  // (opens an incident, sends an alert). Filters out one-off network blips.
+  failureThreshold    Int          @default(2)
+  // Cached state, so the scheduler doesn't query the Check table for every
+  // monitor on every tick. lastStatus is the confirmed state (null until the
+  // first successful check or the first confirmed outage); each Check row
+  // keeps the raw result of that single check.
+  lastCheckedAt       DateTime?
+  lastStatus          CheckStatus?
+  consecutiveFailures Int          @default(0)
+  createdById         String
+  createdBy           User         @relation(fields: [createdById], references: [id])
+  createdAt           DateTime     @default(now())
+  checks              Check[]
+  incidents           Incident[]
+  agentKeys           AgentKey[]
 }
 
 model Check {
