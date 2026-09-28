@@ -21,3 +21,8 @@ export const env = {
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
 };
+
+// With one shared secret, a refresh token would also pass as an access token.
+if (env.jwtAccessSecret === env.jwtRefreshSecret) {
+  throw new Error('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different');
+}

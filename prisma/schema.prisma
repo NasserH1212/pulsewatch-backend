@@ -34,25 +34,33 @@ model User {
   refreshTokens RefreshToken[]
 }
 
+// One row per login session. The row id is also the refresh JWT's `jti`, so
+// /auth/refresh finds the session directly instead of scanning hashes.
 model RefreshToken {
   id        String   @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  tokenHash String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String // SHA-256 of the full token (see hashToken in lib/jwt.ts)
   expiresAt DateTime
   revoked   Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Monitor {
-  id              String     @id @default(uuid())
+  id              String       @id @default(uuid())
   name            String
   type            MonitorType
-  target          String     // full URL for HTTP, hostname/IP for PING, "host:port" for PORT
-  intervalSeconds Int        @default(60)
+  target          String // full URL for HTTP, hostname/IP for PING, "host:port" for PORT
+  intervalSeconds Int          @default(60)
+  // Cached result of the latest check. The scheduler reads these instead of
+  // querying the Check table for every monitor on every tick.
+  lastCheckedAt   DateTime?
+  lastStatus      CheckStatus?
   createdById     String
-  createdBy       User       @relation(fields: [createdById], references: [id])
-  createdAt       DateTime   @default(now())
+  createdBy       User         @relation(fields: [createdById], references: [id])
+  createdAt       DateTime     @default(now())
   checks          Check[]
   incidents       Incident[]
   agentKeys       AgentKey[]

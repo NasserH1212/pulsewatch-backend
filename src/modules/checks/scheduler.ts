@@ -1,57 +1,134 @@
-import cron from 'node-cron';
+import { CheckStatus, Monitor } from '@prisma/client';
 import { Server } from 'socket.io';
 import { prisma } from '../../lib/prisma';
-import { runCheck } from './check.service';
 import { sendTelegramAlert } from '../alerts/telegram.service';
+import { runCheck } from './check.service';
+import { getTransition, isDue } from './monitorState';
 
-// Runs every 30s and checks every monitor regardless of its own intervalSeconds —
-// simple to reason about for a starter project. A production version would group
-// monitors by interval instead of checking everything on one fixed tick.
-export const startScheduler = (io: Server) => {
-  cron.schedule('*/30 * * * * *', async () => {
-    const monitors = await prisma.monitor.findMany();
+// How often the scheduler looks for monitors whose interval has elapsed.
+// Each monitor is still checked on its own intervalSeconds, not on this tick.
+const TICK_MS = 5_000;
 
-    for (const monitor of monitors) {
-      const lastCheck = await prisma.check.findFirst({
-        where: { monitorId: monitor.id },
-        orderBy: { checkedAt: 'desc' },
-      });
-      const wasUp = !lastCheck || lastCheck.status === 'UP';
+// Checks run in parallel, but capped: a burst of slow or timing-out targets
+// can't open hundreds of sockets at once or starve everything else.
+const MAX_CONCURRENT_CHECKS = 10;
 
-      const { isUp, responseTimeMs } = await runCheck(monitor.type, monitor.target);
+type ScheduledMonitor = Pick<Monitor, 'id' | 'name' | 'type' | 'target' | 'intervalSeconds' | 'lastCheckedAt'>;
 
-      await prisma.check.create({
-        data: { monitorId: monitor.id, status: isUp ? 'UP' : 'DOWN', responseTimeMs },
-      });
+type Alert = 'DOWN' | 'UP' | null;
 
-      io.emit('check:update', {
-        monitorId: monitor.id,
-        status: isUp ? 'UP' : 'DOWN',
-        responseTimeMs,
-        checkedAt: new Date().toISOString(),
-      });
+// Saves one check result and updates incidents in a single transaction.
+// The monitor row is locked (FOR UPDATE) and its previous status read inside
+// the transaction, so two results for the same monitor are applied one after
+// the other: a stale read can never open a second incident or send a second alert.
+export const recordResult = (monitorId: string, isUp: boolean, responseTimeMs: number) =>
+  prisma.$transaction(async (tx) => {
+    const [current] = await tx.$queryRaw<{ lastStatus: CheckStatus | null }[]>`
+      SELECT "lastStatus" FROM "Monitor" WHERE "id" = ${monitorId} FOR UPDATE`;
+    if (!current) return null; // monitor was deleted while its check was running
 
-      if (wasUp && !isUp) {
-        await prisma.incident.create({
-          data: { monitorId: monitor.id, cause: 'Check failed' },
-        });
-        await sendTelegramAlert(`🔴 ${monitor.name} is DOWN — ${monitor.target}`);
+    const status: CheckStatus = isUp ? 'UP' : 'DOWN';
+    const checkedAt = new Date();
+
+    await tx.check.create({ data: { monitorId, status, responseTimeMs, checkedAt } });
+    await tx.monitor.update({
+      where: { id: monitorId },
+      data: { lastStatus: status, lastCheckedAt: checkedAt },
+    });
+
+    let alert: Alert = null;
+    const transition = getTransition(current.lastStatus, isUp);
+
+    if (transition === 'WENT_DOWN') {
+      const open = await tx.incident.findFirst({ where: { monitorId, resolvedAt: null } });
+      if (!open) {
+        await tx.incident.create({ data: { monitorId, cause: 'Check failed', startedAt: checkedAt } });
+        alert = 'DOWN';
       }
-
-      if (!wasUp && isUp) {
-        const openIncident = await prisma.incident.findFirst({
-          where: { monitorId: monitor.id, resolvedAt: null },
-        });
-        if (openIncident) {
-          await prisma.incident.update({
-            where: { id: openIncident.id },
-            data: { resolvedAt: new Date() },
-          });
-        }
-        await sendTelegramAlert(`✅ ${monitor.name} is back UP — ${monitor.target}`);
-      }
+    } else if (transition === 'RECOVERED') {
+      await tx.incident.updateMany({
+        where: { monitorId, resolvedAt: null },
+        data: { resolvedAt: checkedAt },
+      });
+      alert = 'UP';
     }
+
+    return { status, checkedAt, alert };
   });
 
-  console.log('⏱  Scheduler started — checking monitors every 30s');
+const checkMonitor = async (monitor: ScheduledMonitor, io: Server) => {
+  const { isUp, responseTimeMs } = await runCheck(monitor.type, monitor.target);
+  const result = await recordResult(monitor.id, isUp, responseTimeMs);
+  if (!result) return;
+
+  io.emit('check:update', {
+    monitorId: monitor.id,
+    status: result.status,
+    responseTimeMs,
+    checkedAt: result.checkedAt.toISOString(),
+  });
+
+  // Network calls stay outside the transaction so it isn't held open.
+  if (result.alert === 'DOWN') {
+    await sendTelegramAlert(`🔴 ${monitor.name} is DOWN — ${monitor.target}`);
+  } else if (result.alert === 'UP') {
+    await sendTelegramAlert(`✅ ${monitor.name} is back UP — ${monitor.target}`);
+  }
+};
+
+// Designed for a single API instance. With several, each would check every
+// monitor (incidents would still be correct thanks to the row lock above);
+// a shared lock such as a Postgres advisory lock would fix that.
+export const startScheduler = (io: Server) => {
+  const inFlight = new Set<string>();
+  // When each monitor's check was last started, measured from tick starts so
+  // intervals stay on schedule. The DB's lastCheckedAt (set when a check
+  // finishes) is only the fallback, e.g. right after a restart.
+  const lastStartedAt = new Map<string, number>();
+  let ticking = false;
+
+  const tick = async () => {
+    if (ticking) return; // the previous tick's DB read hasn't come back yet
+    ticking = true;
+    const now = Date.now();
+
+    try {
+      const monitors = await prisma.monitor.findMany({
+        select: { id: true, name: true, type: true, target: true, intervalSeconds: true, lastCheckedAt: true },
+        orderBy: { lastCheckedAt: { sort: 'asc', nulls: 'first' } }, // most overdue first
+      });
+
+      for (const monitor of monitors) {
+        if (inFlight.size >= MAX_CONCURRENT_CHECKS) break; // the rest wait for the next tick
+        if (inFlight.has(monitor.id)) continue;
+
+        const lastRunAt = lastStartedAt.get(monitor.id) ?? monitor.lastCheckedAt?.getTime();
+        if (!isDue(monitor.intervalSeconds, lastRunAt, now)) continue;
+
+        inFlight.add(monitor.id);
+        lastStartedAt.set(monitor.id, now);
+
+        // Not awaited: checks run in the background while the tick moves on.
+        checkMonitor(monitor, io)
+          .catch((err) => console.error(`[scheduler] check failed for monitor ${monitor.id}:`, err))
+          .finally(() => inFlight.delete(monitor.id));
+      }
+
+      // Forget monitors that have been deleted.
+      const liveIds = new Set(monitors.map((m) => m.id));
+      for (const id of lastStartedAt.keys()) {
+        if (!liveIds.has(id)) lastStartedAt.delete(id);
+      }
+    } catch (err) {
+      console.error('[scheduler] tick failed:', err);
+    } finally {
+      ticking = false;
+    }
+  };
+
+  const timer = setInterval(() => void tick(), TICK_MS);
+  void tick();
+  console.log(`⏱  Scheduler started — each monitor is checked on its own interval`);
+
+  return () => clearInterval(timer);
 };
