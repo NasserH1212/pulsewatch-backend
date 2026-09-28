@@ -1,8 +1,14 @@
 # PulseWatch
 
+[![CI](https://github.com/NasserH1212/pulsewatch-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/NasserH1212/pulsewatch-backend/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 Self-hosted infrastructure uptime & alerting API. PulseWatch periodically checks HTTP endpoints, TCP ports, and hosts (ICMP ping), stores historical results, pushes live status updates over WebSockets, and sends Telegram alerts the moment something goes down — and again when it recovers.
 
 > Built as a portfolio project to demonstrate backend architecture, real-time systems, and applied security practices (RBAC, JWT, rate limiting) beyond typical CRUD apps.
+
+**Frontend:** the React dashboard for this API lives in [pulsewatch-frontend](https://github.com/NasserH1212/pulsewatch-frontend).
 
 ## Features
 
@@ -179,7 +185,7 @@ DB tests clean up the users and monitors they create. CI runs everything against
 
 ## Roadmap
 
-- [ ] React + TypeScript dashboard (live status grid + Recharts uptime history)
+- [ ] React + TypeScript dashboard (live status grid + Recharts uptime history), in progress in [pulsewatch-frontend](https://github.com/NasserH1212/pulsewatch-frontend)
 - [ ] Public status page (read-only, no auth)
 - [ ] External agent push endpoint using the existing HMAC middleware
 - [x] Per-monitor check intervals
@@ -192,4 +198,4 @@ DB tests clean up the users and monitors they create. CI runs everything against
 
 ## License
 
-MIT
+[MIT](LICENSE)
