@@ -56,6 +56,25 @@ export interface Evaluation {
 //   threshold. Below it, the confirmed state stays as it was.
 // A brand-new monitor (lastStatus null) that fails enough times still goes
 // DOWN, so a target that is dead from the start gets an alert too.
+export const evaluateCheck = (previous: MonitorHealth, isUp: boolean): Evaluation => {
+  if (isUp) {
+    return {
+      lastStatus: 'UP',
+      consecutiveFailures: 0,
+      transition: previous.lastStatus === 'DOWN' ? 'RECOVERED' : 'NONE',
+    };
+  }
+
+  const consecutiveFailures = previous.consecutiveFailures + 1;
+  if (previous.lastStatus === 'DOWN') {
+    return { lastStatus: 'DOWN', consecutiveFailures, transition: 'NONE' };
+  }
+  if (consecutiveFailures >= Math.max(1, previous.failureThreshold)) {
+    return { lastStatus: 'DOWN', consecutiveFailures, transition: 'WENT_DOWN' };
+  }
+  return { lastStatus: previous.lastStatus, consecutiveFailures, transition: 'NONE' };
+};
+
 export const STATS_PERIODS = ['24h', '7d', '30d'] as const;
 export type StatsPeriod = (typeof STATS_PERIODS)[number];
 
@@ -81,23 +100,4 @@ export const downtimeSecondsInPeriod = (incidents: IncidentSpan[], periodStart: 
     if (end > start) totalMs += end - start;
   }
   return Math.round(totalMs / 1000);
-};
-
-export const evaluateCheck = (previous: MonitorHealth, isUp: boolean): Evaluation => {
-  if (isUp) {
-    return {
-      lastStatus: 'UP',
-      consecutiveFailures: 0,
-      transition: previous.lastStatus === 'DOWN' ? 'RECOVERED' : 'NONE',
-    };
-  }
-
-  const consecutiveFailures = previous.consecutiveFailures + 1;
-  if (previous.lastStatus === 'DOWN') {
-    return { lastStatus: 'DOWN', consecutiveFailures, transition: 'NONE' };
-  }
-  if (consecutiveFailures >= Math.max(1, previous.failureThreshold)) {
-    return { lastStatus: 'DOWN', consecutiveFailures, transition: 'WENT_DOWN' };
-  }
-  return { lastStatus: previous.lastStatus, consecutiveFailures, transition: 'NONE' };
 };

@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { recordResult } from '../modules/checks/scheduler';
+import { loadCheckableMonitors, recordResult } from '../modules/checks/scheduler';
 import { cleanupUsers, uniqueEmail } from './helpers';
 
 // Requires a running database (see auth.test.ts). Exercises the part of the
@@ -114,5 +114,19 @@ describe('recordResult edge cases', () => {
     const { id } = await createMonitor();
     await prisma.monitor.delete({ where: { id } });
     expect(await recordResult(id, false, 5000)).toBeNull();
+  });
+});
+
+describe('loadCheckableMonitors', () => {
+  it('skips paused monitors, so the scheduler never ticks them', async () => {
+    const active = await createMonitor();
+    const paused = await prisma.monitor.create({
+      data: { name: 'Paused', type: 'HTTP', target: 'https://example.com', createdById: userId, paused: true },
+    });
+
+    const ids = (await loadCheckableMonitors()).map((m) => m.id);
+
+    expect(ids).toContain(active.id);
+    expect(ids).not.toContain(paused.id);
   });
 });

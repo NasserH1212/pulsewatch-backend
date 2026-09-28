@@ -114,9 +114,10 @@ the database instead of loading every check row:
   "avgResponseTimeMs": 142, "incidentCount": 1, "downtimeSeconds": 180 }
 ```
 
-`uptimePercent` is the share of checks that were UP; `avgResponseTimeMs` averages UP checks only
-(a timed-out check has no response time). `downtimeSeconds` is incident time clipped to the
-period — an incident that started earlier or is still open only counts the part inside the window.
+`uptimePercent` is the share of checks that were UP; `avgResponseTimeMs` averages UP checks only,
+so a run of DOWN checks (including timeouts) never skews it. `downtimeSeconds` is incident time
+clipped to the period — an incident that started earlier or is still open only counts the part
+inside the window.
 
 **Updating a monitor.** `PATCH /api/monitors/:id` (ADMIN) accepts any of `name`, `target`,
 `intervalSeconds`, `failureThreshold` and `paused`; at least one is required. The monitor's `type`

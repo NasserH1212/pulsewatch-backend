@@ -4,6 +4,10 @@ import { isPrismaError } from '../lib/prisma';
 interface AppError {
   status?: number;
   message?: string;
+  // A service can throw these alongside status/message to give the same
+  // per-field shape validateBody uses, e.g. a target rejected against the
+  // monitor's type in monitor.service.ts.
+  details?: { field: string; message: string }[];
   type?: string; // set by express.json() for body parsing errors
 }
 
@@ -13,16 +17,20 @@ interface AppError {
 export const errorHandler = (err: AppError, _req: Request, res: Response, _next: NextFunction) => {
   let status = typeof err?.status === 'number' ? err.status : 500;
   let message = err?.message;
+  let details = err?.details;
 
   // Fallbacks for Prisma errors a service didn't handle itself.
   if (isPrismaError(err, 'P2025')) {
     status = 404;
     message = 'Not found';
+    details = undefined;
   } else if (isPrismaError(err, 'P2002')) {
     status = 409;
     message = 'Already exists';
+    details = undefined;
   } else if (err?.type === 'entity.parse.failed') {
     message = 'Malformed JSON body';
+    details = undefined;
   }
 
   if (status >= 500) {
@@ -30,9 +38,10 @@ export const errorHandler = (err: AppError, _req: Request, res: Response, _next:
     // message, so database errors, file paths or stack traces never leak.
     console.error(err);
     message = 'Internal server error';
+    details = undefined;
   }
 
-  res.status(status).json({ error: message || 'Request failed' });
+  res.status(status).json({ error: message || 'Request failed', ...(details ? { details } : {}) });
 };
 
 // Answers unknown routes with JSON, like every other error, instead of

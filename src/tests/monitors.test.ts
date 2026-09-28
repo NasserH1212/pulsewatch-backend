@@ -237,13 +237,17 @@ describe('PATCH /api/monitors/:id', () => {
     expect(res.body.consecutiveFailures).toBe(3);
   });
 
-  it('rejects a target that no longer matches the monitor type', async () => {
+  it('rejects a target that no longer matches the monitor type, with the same shape validateBody uses', async () => {
     const res = await request(app)
       .patch(`/api/monitors/${monitorId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ target: 'not a url' });
 
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Invalid request body');
+    expect(res.body.details).toEqual([
+      { field: 'target', message: 'HTTP target must be a full URL, e.g. https://example.com/health' },
+    ]);
   });
 
   it('ignores an attempt to change the type', async () => {

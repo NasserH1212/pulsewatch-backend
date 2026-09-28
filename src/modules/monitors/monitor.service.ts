@@ -84,7 +84,13 @@ export const updateMonitor = async (id: string, input: UpdateMonitorInput) => {
 
   if (input.target !== undefined) {
     const rule = targetRules[monitor.type];
-    if (!rule.isValid(input.target)) throw { status: 400, message: rule.message };
+    if (!rule.isValid(input.target)) {
+      throw {
+        status: 400,
+        message: 'Invalid request body',
+        details: [{ field: 'target', message: rule.message }],
+      };
+    }
 
     data.target = input.target;
     if (input.target !== monitor.target) data.consecutiveFailures = 0;

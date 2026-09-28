@@ -13,10 +13,29 @@ const TICK_MS = 5_000;
 // can't open hundreds of sockets at once or starve everything else.
 const MAX_CONCURRENT_CHECKS = 10;
 
-type ScheduledMonitor = Pick<
+export type ScheduledMonitor = Pick<
   Monitor,
   'id' | 'name' | 'type' | 'target' | 'intervalSeconds' | 'lastCheckedAt' | 'lastStatus' | 'consecutiveFailures'
 >;
+
+// Monitors the scheduler is willing to check: not paused. Kept as its own
+// function (rather than inline in tick) so a test can prove paused monitors
+// are excluded without waiting on the tick timer (see scheduler.test.ts).
+export const loadCheckableMonitors = (): Promise<ScheduledMonitor[]> =>
+  prisma.monitor.findMany({
+    where: { paused: false },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      target: true,
+      intervalSeconds: true,
+      lastCheckedAt: true,
+      lastStatus: true,
+      consecutiveFailures: true,
+    },
+    orderBy: { lastCheckedAt: { sort: 'asc', nulls: 'first' } }, // most overdue first
+  });
 
 type Alert = 'DOWN' | 'UP' | null;
 
@@ -116,20 +135,7 @@ export const startScheduler = (io: Server) => {
     const now = Date.now();
 
     try {
-      const monitors = await prisma.monitor.findMany({
-        where: { paused: false },
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          target: true,
-          intervalSeconds: true,
-          lastCheckedAt: true,
-          lastStatus: true,
-          consecutiveFailures: true,
-        },
-        orderBy: { lastCheckedAt: { sort: 'asc', nulls: 'first' } }, // most overdue first
-      });
+      const monitors = await loadCheckableMonitors();
 
       for (const monitor of monitors) {
         if (inFlight.size >= MAX_CONCURRENT_CHECKS) break; // the rest wait for the next tick
